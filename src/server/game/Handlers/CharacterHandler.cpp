@@ -62,6 +62,7 @@
 #include "WorldPacket.h"
 #include "WorldSession.h"
 #include "WorldSessionMgr.h"
+#include <algorithm>
 
 LoginQueryHolder::LoginQueryHolder(uint32 accountId, ObjectGuid guid)
     : _accountId(accountId), _guid(guid) { }
@@ -257,6 +258,7 @@ void WorldSession::HandleCharEnumOpcode(WorldPacket& /*recvData*/)
 
     stmt->SetData(0, PET_SAVE_AS_CURRENT);
     stmt->SetData(1, GetAccountId());
+    stmt->SetData(2, GetAccountId());
 
     _queryProcessor.AddCallback(CharacterDatabase.AsyncQuery(stmt).WithPreparedCallback(std::bind(&WorldSession::HandleCharEnum, this, std::placeholders::_1)));
 }
@@ -275,6 +277,13 @@ void WorldSession::HandleCharCreateOpcode(WorldPacket& recvData)
              >> createInfo->HairColor
              >> createInfo->FacialHair
              >> createInfo->OutfitId;
+
+    uint8 scriptResponse = CHAR_CREATE_ERROR;
+    if (!sScriptMgr->OnPlayerCharacterCreateRequest(this, createInfo->Name, createInfo->Race, createInfo->Class, scriptResponse))
+    {
+        SendCharCreate(ResponseCodes(scriptResponse));
+        return;
+    }
 
     if (!HasPermission(rbac::RBAC_PERM_SKIP_CHECK_CHARACTER_CREATION_TEAMMASK))
     {
@@ -653,6 +662,53 @@ void WorldSession::HandleCharDeleteOpcode(WorldPacket& recvData)
         level = playerData->Level;
     }
 
+    // Shared control: deleting a shared character only removes it from this account's list.
+    std::vector<uint32> sharedAccounts;
+    CharacterDatabasePreparedStatement* sharedStmt = CharacterDatabase.GetPreparedStatement(CHAR_SEL_CHARACTER_SHARED_ACCESS);
+    sharedStmt->SetData(0, guid.GetCounter());
+    if (PreparedQueryResult sharedResult = CharacterDatabase.Query(sharedStmt))
+    {
+        do
+            sharedAccounts.push_back((*sharedResult)[0].Get<uint32>());
+        while (sharedResult->NextRow());
+    }
+
+    if (accountId && (accountId == initAccountId || std::find(sharedAccounts.begin(), sharedAccounts.end(), initAccountId) != sharedAccounts.end())
+        && (accountId != initAccountId || !sharedAccounts.empty()))
+    {
+        // The owner leaving hands the character over to the first account sharing it.
+        uint32 newOwner = accountId == initAccountId ? sharedAccounts.front() : 0;
+        uint32 leftAccess = newOwner ? newOwner : initAccountId;
+
+        CharacterDatabaseTransaction trans = CharacterDatabase.BeginTransaction();
+        CharacterDatabasePreparedStatement* stmt = CharacterDatabase.GetPreparedStatement(CHAR_DEL_CHARACTER_SHARED_ACCESS);
+        stmt->SetData(0, guid.GetCounter());
+        stmt->SetData(1, leftAccess);
+        trans->Append(stmt);
+
+        if (newOwner)
+        {
+            stmt = CharacterDatabase.GetPreparedStatement(CHAR_UPD_CHARACTER_OWNER_ACCOUNT);
+            stmt->SetData(0, newOwner);
+            stmt->SetData(1, guid.GetCounter());
+            trans->Append(stmt);
+            sCharacterCache->UpdateCharacterAccountId(guid, newOwner);
+        }
+
+        CharacterDatabase.CommitTransaction(trans);
+
+        LOG_INFO("entities.player.character", "Account: {}, IP: {} left shared character: {}, {} (new owner: {})",
+            initAccountId, GetRemoteAddress(), name, guid.ToString(), newOwner);
+
+        sScriptMgr->OnPlayerSharedAccessLeft(guid, initAccountId, newOwner);
+        sWorld->UpdateRealmCharCount(initAccountId);
+        if (newOwner)
+            sWorld->UpdateRealmCharCount(newOwner);
+
+        SendCharDelete(CHAR_DELETE_SUCCESS);
+        return;
+    }
+
     // prevent deleting other players' characters using cheating tools
     if (accountId != initAccountId)
     {
@@ -700,17 +756,42 @@ void WorldSession::HandlePlayerLoginOpcode(WorldPacket& recvData)
     }
 
     // pussywizard:
+    WorldSession* sharedOfflineSession = nullptr;
     if (WorldSession* sess = sWorldSessionMgr->FindOfflineSessionForCharacterGUID(playerGuid.GetCounter()))
     {
         if (sess->GetAccountId() != GetAccountId())
         {
-            SendCharLoginFailed(LoginFailureReason::DuplicateCharacter);
+            // Shared control: another account left this shared character in world, continue it from here.
+            Player* offlinePlayer = sess->GetPlayer();
+            if (!offlinePlayer || sess->IsKicked() || !sScriptMgr->OnPlayerCanJoinAsCopilot(offlinePlayer, this))
+            {
+                SendCharLoginFailed(LoginFailureReason::DuplicateCharacter);
+                return;
+            }
+
+            sharedOfflineSession = sess;
+        }
+    }
+    else if (Player* inWorld = ObjectAccessor::FindConnectedPlayer(playerGuid))
+    {
+        // Shared control: a client of another account plays this character right now.
+        WorldSession* primary = inWorld->GetSession();
+        if (primary && primary->GetAccountId() != GetAccountId())
+        {
+            if (primary->PlayerLogout() || primary->PlayerLoading() || !inWorld->IsInWorld() || inWorld->IsBeingTeleported()
+                || !sScriptMgr->OnPlayerCanJoinAsCopilot(inWorld, this))
+            {
+                SendCharLoginFailed(LoginFailureReason::DuplicateCharacter);
+                return;
+            }
+
+            HandlePlayerLoginAsCopilot(inWorld);
             return;
         }
     }
 
     // pussywizard:
-    if (WorldSession* sess = sWorldSessionMgr->FindOfflineSession(GetAccountId()))
+    if (WorldSession* sess = sharedOfflineSession ? sharedOfflineSession : sWorldSessionMgr->FindOfflineSession(GetAccountId()))
     {
         Player* p = sess->GetPlayer();
         if (!p || sess->IsKicked())
@@ -1272,6 +1353,32 @@ void WorldSession::HandlePlayerLoginToCharInWorld(Player* pCurrChar)
         ChatHandler(pCurrChar->GetSession()).SendNotification(LANG_GM_ON);
 
     m_playerLoading = false;
+}
+
+void WorldSession::HandlePlayerLoginAsCopilot(Player* player)
+{
+    m_playerLoading = true;
+    SetPlayer(player);
+
+    // Per-character UI data (macros, layout...) is shared with the steering client but never saved from here.
+    WorldSession* primary = player->GetSession();
+    for (uint8 type = 0; type < NUM_ACCOUNT_DATA_TYPES; ++type)
+        if (PER_CHARACTER_CACHE_MASK & (1 << type))
+            m_accountData[type] = *primary->GetAccountData(AccountDataType(type));
+
+    SendCopilotWorldState(true);
+    player->AddCopilotSession(this);
+
+    LoginDatabasePreparedStatement* loginStmt = LoginDatabase.GetPreparedStatement(LOGIN_UPD_ACCOUNT_ONLINE);
+    loginStmt->SetData(0, realm.Id.Realm);
+    loginStmt->SetData(1, GetAccountId());
+    LoginDatabase.Execute(loginStmt);
+
+    LOG_INFO("entities.player", "Account: {} (IP: {}) shares control of [{}] ({}) with account {}",
+        GetAccountId(), GetRemoteAddress(), player->GetName(), player->GetGUID().ToString(), primary->GetAccountId());
+
+    m_playerLoading = false;
+    sScriptMgr->OnPlayerCopilotAttached(player, this);
 }
 
 void WorldSession::HandlePlayerLoginToCharOutOfWorld(Player* /*pCurrChar*/)

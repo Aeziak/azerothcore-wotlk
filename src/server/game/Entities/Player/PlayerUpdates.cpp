@@ -40,6 +40,7 @@
 #include "WeatherMgr.h"
 #include "WorldState.h"
 #include "WorldStatePackets.h"
+#include <algorithm>
 
 /// @todo: this import is not necessary for compilation and marked as unused by the IDE
 //  however, for some reasons removing it would cause a damn linking issue
@@ -2388,12 +2389,23 @@ void Player::ExecuteOrCancelSpellCastRequest(PendingSpellCastRequest* request, b
     if (isCancel)
         request->cancelInProgress = true;
 
-    if (WorldSession* session = GetSession())
+    WorldSession* session = GetSession();
+
+    // Shared control: replay the request as the client that sent it, if it is still attached.
+    if (request->session && std::find(_copilotSessions.begin(), _copilotSessions.end(), request->session) != _copilotSessions.end())
+        session = request->session;
+
+    if (session)
     {
+        WorldSession* actingSession = _actingSession;
+        SetActingSession(session);
+
         if (request->isItem)
             session->HandleUseItemOpcode(request->requestPacket);
         else
             session->HandleCastSpellOpcode(request->requestPacket);
+
+        SetActingSession(actingSession);
     }
 }
 

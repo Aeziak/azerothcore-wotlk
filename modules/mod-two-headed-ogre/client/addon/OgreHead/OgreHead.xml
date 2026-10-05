@@ -1,0 +1,20 @@
+<Ui xmlns="http://www.blizzard.com/wow/ui/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.blizzard.com/wow/ui/
+..\FrameXML\UI.xsd">
+	<!-- mod-two-headed-ogre: the head's action bar, laid over the main action bar (see OgreHead.lua). -->
+	<Frame name="OgreHeadBar" parent="UIParent" frameStrata="HIGH" hidden="true">
+		<Size x="498" y="36"/>
+		<Anchors>
+			<Anchor point="TOPLEFT" relativeTo="ActionButton1" relativePoint="TOPLEFT"/>
+		</Anchors>
+		<Layers>
+			<Layer level="OVERLAY">
+				<FontString name="$parentTitle" inherits="GameFontNormalSmall" justifyH="LEFT">
+					<Anchors>
+						<Anchor point="BOTTOMLEFT" relativePoint="TOPLEFT" x="2" y="4"/>
+					</Anchors>
+				</FontString>
+			</Layer>
+		</Layers>
+	</Frame>
+	<Script file="OgreHead.lua"/>
+</Ui>

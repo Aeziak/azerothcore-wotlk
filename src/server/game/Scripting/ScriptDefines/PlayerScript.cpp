@@ -1004,6 +1004,61 @@ void ScriptMgr::OnPlayerAfterTrainSpell(Player* player, Creature* trainer, uint3
     CALL_ENABLED_HOOKS(PlayerScript, PLAYERHOOK_ON_AFTER_TRAIN_SPELL, script->OnPlayerAfterTrainSpell(player, trainer, spellId));
 }
 
+bool ScriptMgr::OnPlayerCharacterCreateRequest(WorldSession* session, std::string& name, uint8 race, uint8& playerClass, uint8& response)
+{
+    CALL_ENABLED_BOOLEAN_HOOKS(PlayerScript, PLAYERHOOK_ON_CHARACTER_CREATE_REQUEST,
+        !script->OnPlayerCharacterCreateRequest(session, name, race, playerClass, response));
+}
+
+bool ScriptMgr::OnPlayerCanJoinAsCopilot(Player* player, WorldSession* session)
+{
+    CALL_ENABLED_BOOLEAN_HOOKS_WITH_DEFAULT_FALSE(PlayerScript, PLAYERHOOK_CAN_JOIN_AS_COPILOT,
+        script->OnPlayerCanJoinAsCopilot(player, session));
+}
+
+void ScriptMgr::OnPlayerCopilotAttached(Player* player, WorldSession* session)
+{
+    CALL_ENABLED_HOOKS(PlayerScript, PLAYERHOOK_ON_COPILOT_ATTACHED, script->OnPlayerCopilotAttached(player, session));
+}
+
+void ScriptMgr::OnPlayerCopilotDetached(Player* player, WorldSession* session)
+{
+    CALL_ENABLED_HOOKS(PlayerScript, PLAYERHOOK_ON_COPILOT_DETACHED, script->OnPlayerCopilotDetached(player, session));
+}
+
+void ScriptMgr::OnPlayerCopilotSetActionButton(Player* player, WorldSession* session, uint8 button, uint32 packedData)
+{
+    CALL_ENABLED_HOOKS(PlayerScript, PLAYERHOOK_ON_COPILOT_SET_ACTION_BUTTON,
+        script->OnPlayerCopilotSetActionButton(player, session, button, packedData));
+}
+
+bool ScriptMgr::OnPlayerCanUseSpellFromSession(Player const* player, WorldSession const* session, uint32 spellId)
+{
+    CALL_ENABLED_BOOLEAN_HOOKS(PlayerScript, PLAYERHOOK_CAN_USE_SPELL_FROM_SESSION,
+        !script->OnPlayerCanUseSpellFromSession(player, session, spellId));
+}
+
+void ScriptMgr::OnPlayerFall(Player* player, float fallHeight, bool& fallDamage)
+{
+    CALL_ENABLED_HOOKS(PlayerScript, PLAYERHOOK_ON_FALL, script->OnPlayerFall(player, fallHeight, fallDamage));
+}
+
+void ScriptMgr::OnPlayerSessionHandover(Player* player, WorldSession* oldSession, WorldSession* newSession)
+{
+    CALL_ENABLED_HOOKS(PlayerScript, PLAYERHOOK_ON_SESSION_HANDOVER, script->OnPlayerSessionHandover(player, oldSession, newSession));
+}
+
+void ScriptMgr::OnPlayerSharedAccessLeft(ObjectGuid guid, uint32 accountId, uint32 newOwnerAccountId)
+{
+    CALL_ENABLED_HOOKS(PlayerScript, PLAYERHOOK_ON_SHARED_ACCESS_LEFT, script->OnPlayerSharedAccessLeft(guid, accountId, newOwnerAccountId));
+}
+
+bool ScriptMgr::OnPlayerCanIgnoreItemRestrictions(Player const* player, ItemTemplate const* proto)
+{
+    CALL_ENABLED_BOOLEAN_HOOKS_WITH_DEFAULT_FALSE(PlayerScript, PLAYERHOOK_CAN_IGNORE_ITEM_RESTRICTIONS,
+        script->OnPlayerCanIgnoreItemRestrictions(player, proto));
+}
+
 PlayerScript::PlayerScript(char const* name, std::vector<uint16> enabledHooks)
     : ScriptObject(name, PLAYERHOOK_END)
 {

@@ -45,6 +45,15 @@
 void WorldSession::HandleMoveWorldportAckOpcode(WorldPacket& /*recvData*/)
 {
     LOG_DEBUG("network", "WORLD: got MSG_MOVE_WORLDPORT_ACK.");
+
+    // Shared control: this client took over the player while it was loading the destination map.
+    if (_copilotAwaitingWorldport)
+    {
+        _copilotAwaitingWorldport = false;
+        _copilotNeedsResync = true;
+        return;
+    }
+
     HandleMoveWorldportAck();
 }
 
@@ -411,6 +420,10 @@ void WorldSession::HandleMovementOpcodes(WorldPacket& recvData)
     WorldPacket data(opcode, recvData.size());
     WriteMovementInfo(&data, &movementInfo);
     mover->SendMessageToSet(&data, _player);
+
+    // Shared control: co-pilot clients display the movement this client drives.
+    for (WorldSession* copilot : _player->GetCopilotSessions())
+        copilot->SendCopilotPacket(&data);
 }
 
 void WorldSession::SynchronizeMovement(MovementInfo& movementInfo)

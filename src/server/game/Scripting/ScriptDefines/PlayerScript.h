@@ -235,6 +235,16 @@ enum PlayerHook
     PLAYERHOOK_ON_BEFORE_RECEIVE_SPELL_LIST_FROM_TRAINER,
     PLAYERHOOK_ON_GET_TRAINER_SPELL_STATE,
     PLAYERHOOK_ON_AFTER_TRAIN_SPELL,
+    PLAYERHOOK_ON_CHARACTER_CREATE_REQUEST,
+    PLAYERHOOK_CAN_JOIN_AS_COPILOT,
+    PLAYERHOOK_ON_COPILOT_ATTACHED,
+    PLAYERHOOK_ON_COPILOT_DETACHED,
+    PLAYERHOOK_ON_SESSION_HANDOVER,
+    PLAYERHOOK_ON_SHARED_ACCESS_LEFT,
+    PLAYERHOOK_CAN_IGNORE_ITEM_RESTRICTIONS,
+    PLAYERHOOK_ON_COPILOT_SET_ACTION_BUTTON,
+    PLAYERHOOK_CAN_USE_SPELL_FROM_SESSION,
+    PLAYERHOOK_ON_FALL,
     PLAYERHOOK_END
 };
 
@@ -966,6 +976,57 @@ public:
      * @param spellId The id of the trainer spell that was bought
      */
     virtual void OnPlayerAfterTrainSpell(Player* /*player*/, Creature* /*trainer*/, uint32 /*spellId*/) {}
+
+    /**
+     * @brief Called when CMSG_CHAR_CREATE is received, before the request is validated.
+     *
+     * Scripts may rewrite the requested name and class, or answer the request themselves.
+     *
+     * @return false to stop the creation; `response` (a ResponseCodes value) is then sent to the client
+     */
+    [[nodiscard]] virtual bool OnPlayerCharacterCreateRequest(WorldSession* /*session*/, std::string& /*name*/, uint8 /*race*/,
+        uint8& /*playerClass*/, uint8& /*response*/) { return true; }
+
+    /**
+     * @brief Shared control: called when `session` logs into `player` while another session plays it.
+     *
+     * @return true to attach `session` as a co-pilot (it sees everything, never steers). The default refuses.
+     */
+    [[nodiscard]] virtual bool OnPlayerCanJoinAsCopilot(Player* /*player*/, WorldSession* /*session*/) { return false; }
+
+    // Shared control: a co-pilot session attached to / detached from `player`.
+    virtual void OnPlayerCopilotAttached(Player* /*player*/, WorldSession* /*session*/) { }
+    virtual void OnPlayerCopilotDetached(Player* /*player*/, WorldSession* /*session*/) { }
+
+    // Shared control: a co-pilot changed one of its action buttons (packed action + type, 0 = cleared).
+    // The shared player's own bars are never touched: co-pilot bars only exist if a script keeps them.
+    virtual void OnPlayerCopilotSetActionButton(Player* /*player*/, WorldSession* /*session*/, uint8 /*button*/,
+        uint32 /*packedData*/) { }
+
+    /**
+     * @brief Shared control: whether the client of `session` (primary or co-pilot) may cast `spellId` as `player`.
+     *
+     * A refused spell cannot be cast from that client and is left out of the spell list it receives.
+     */
+    [[nodiscard]] virtual bool OnPlayerCanUseSpellFromSession(Player const* /*player*/, WorldSession const* /*session*/,
+        uint32 /*spellId*/) { return true; }
+
+    /**
+     * @brief Called when `player` lands after a fall of `fallHeight` yards (can be small or negative).
+     *
+     * @param fallDamage set to false to cancel the fall damage
+     */
+    virtual void OnPlayerFall(Player* /*player*/, float /*fallHeight*/, bool& /*fallDamage*/) { }
+
+    // Shared control: the steering session left, `newSession` (a former co-pilot) now steers `player`.
+    virtual void OnPlayerSessionHandover(Player* /*player*/, WorldSession* /*oldSession*/, WorldSession* /*newSession*/) { }
+
+    // Shared control: `accountId` deleted the shared character from its list and lost access to it.
+    // `newOwnerAccountId` is set when the owner left and the character changed owner.
+    virtual void OnPlayerSharedAccessLeft(ObjectGuid /*guid*/, uint32 /*accountId*/, uint32 /*newOwnerAccountId*/) { }
+
+    // Return true to let `player` use `proto` regardless of its class and race restrictions.
+    [[nodiscard]] virtual bool OnPlayerCanIgnoreItemRestrictions(Player const* /*player*/, ItemTemplate const* /*proto*/) { return false; }
 };
 
 #endif

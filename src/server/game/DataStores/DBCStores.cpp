@@ -26,6 +26,7 @@
 #include "SpellMgr.h"
 #include "TransportMgr.h"
 #include "World.h"
+#include <array>
 #include <map>
 
 typedef std::tuple<int16, int8, int32> WMOAreaTableKey;
@@ -904,17 +905,46 @@ uint32 GetDefaultMapLight(uint32 mapId)
     return 0;
 }
 
+namespace
+{
+    struct RaceAlias
+    {
+        uint32 RaceMask = 0;
+        uint32 SkillClassMask = 0;
+    };
+
+    // Indexed by race - 1, filled once at startup by scripts.
+    std::array<RaceAlias, 32> RaceAliases = { };
+}
+
+void SetRaceAlias(uint8 race, uint32 raceMask, uint32 skillClassMask)
+{
+    if (race && race <= RaceAliases.size())
+        RaceAliases[race - 1] = { raceMask, skillClassMask };
+}
+
+uint32 GetRaceMaskWithAlias(uint8 race)
+{
+    if (!race || race > RaceAliases.size())
+        return 0;
+
+    return (1 << (race - 1)) | RaceAliases[race - 1].RaceMask;
+}
+
 SkillRaceClassInfoEntry const* GetSkillRaceClassInfo(uint32 skill, uint8 race, uint8 class_)
 {
+    uint32 raceMask = GetRaceMaskWithAlias(race);
+    uint32 classMask = (1 << (class_ - 1)) | (race && race <= RaceAliases.size() ? RaceAliases[race - 1].SkillClassMask : 0);
+
     SkillRaceClassInfoBounds bounds = SkillRaceClassInfoBySkill.equal_range(skill);
     for (SkillRaceClassInfoMap::iterator itr = bounds.first; itr != bounds.second; ++itr)
     {
-        if (itr->second->RaceMask && !(itr->second->RaceMask & (1 << (race - 1))))
+        if (itr->second->RaceMask && !(itr->second->RaceMask & raceMask))
         {
             continue;
         }
 
-        if (itr->second->ClassMask && !(itr->second->ClassMask & (1 << (class_ - 1))))
+        if (itr->second->ClassMask && !(itr->second->ClassMask & classMask))
         {
             continue;
         }

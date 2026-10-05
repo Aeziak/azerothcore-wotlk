@@ -2369,7 +2369,8 @@ InventoryResult Player::CanUseItem(ItemTemplate const* proto) const
         return EQUIP_ERR_YOU_CAN_NEVER_USE_THAT_ITEM;
     }
 
-    if ((proto->AllowableClass & getClassMask()) == 0 || (proto->AllowableRace & getRaceMask()) == 0)
+    if (((proto->AllowableClass & getClassMask()) == 0 || (proto->AllowableRace & getRaceMask()) == 0)
+        && !sScriptMgr->OnPlayerCanIgnoreItemRestrictions(this, proto))
     {
         return EQUIP_ERR_YOU_CAN_NEVER_USE_THAT_ITEM;
     }
@@ -2468,7 +2469,8 @@ InventoryResult Player::CanRollForItemInLFG(ItemTemplate const* proto, WorldObje
     if (proto->HasFlag2(ITEM_FLAG2_EVERYONE_CAN_ROLL_NEED))
         return EQUIP_ERR_OK;
 
-    if ((proto->AllowableClass & getClassMask()) == 0 || (proto->AllowableRace & getRaceMask()) == 0)
+    if (((proto->AllowableClass & getClassMask()) == 0 || (proto->AllowableRace & getRaceMask()) == 0)
+        && !sScriptMgr->OnPlayerCanIgnoreItemRestrictions(this, proto))
         return EQUIP_ERR_YOU_CAN_NEVER_USE_THAT_ITEM;
 
     if (proto->RequiredSpell != 0 && !HasSpell(proto->RequiredSpell))
@@ -5048,7 +5050,8 @@ bool Player::LoadFromDB(ObjectGuid playerGuid, CharacterDatabaseQueryHolder cons
 
     // check if the character's account in the db and the logged in account match.
     // player should be able to load/delete character only with correct account!
-    if (dbAccountId != GetSession()->GetAccountId())
+    // Shared control: accounts listed in character_shared_access got this character in their enum.
+    if (dbAccountId != GetSession()->GetAccountId() && !GetSession()->IsLegitCharacter(playerGuid))
     {
         LOG_ERROR("entities.player", "Player ({}) loading from wrong account (is: {}, should be: {})", playerGuid.ToString(), GetSession()->GetAccountId(), dbAccountId);
         return false;

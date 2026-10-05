@@ -463,6 +463,13 @@ public:
     bool ProcessMovementInfo(MovementInfo& movementInfo, Unit* mover, Player* plrMover, WorldPacket& recvData);
 
     void SendPacket(WorldPacket const* packet);
+
+    // Shared control: a co-pilot session displays an in-world player steered by another (primary) session.
+    [[nodiscard]] bool IsCopilot() const;
+    void HandlePlayerLoginAsCopilot(Player* player);
+    void SendCopilotPacket(WorldPacket const* packet);
+    bool IsLegitCharacter(ObjectGuid guid) { return IsLegitCharacterForAccount(guid); }
+
     void SendPetNameInvalid(uint32 error, std::string const& name, DeclinedName* declinedName);
     void SendPartyResult(PartyOperation operation, std::string const& member, PartyResult res, uint32 val = 0);
 
@@ -1274,6 +1281,16 @@ private:
     bool CanUseBank(ObjectGuid bankerGUID = ObjectGuid::Empty) const;
 
     bool recoveryItem(Item* pItem);
+
+    // shared control helpers
+    bool HandleCopilotRestrictedOpcode(WorldPacket const& packet);
+    void SendCopilotWorldState(bool login);
+    void DetachCopilot();
+    void HandOverPlayer();
+    void FinishLogout();
+
+    bool _copilotAwaitingWorldport{ false };            // co-pilot client is on a loading screen
+    bool _copilotNeedsResync{ false };                  // co-pilot client must receive a fresh world snapshot
 
     // logging helper
     void LogUnexpectedOpcode(WorldPacket* packet, char const* status, char const* reason);

@@ -72,6 +72,11 @@ typedef std::unordered_multimap<uint32, SkillRaceClassInfoEntry const*> SkillRac
 typedef std::pair<SkillRaceClassInfoMap::iterator, SkillRaceClassInfoMap::iterator> SkillRaceClassInfoBounds;
 SkillRaceClassInfoEntry const* GetSkillRaceClassInfo(uint32 skill, uint8 race, uint8 class_);
 
+// Custom races: `race` also counts as the races in `raceMask` for race-restricted content, and its
+// characters count as the classes in `skillClassMask` for skill eligibility (SkillRaceClassInfo).
+void SetRaceAlias(uint8 race, uint32 raceMask, uint32 skillClassMask);
+uint32 GetRaceMaskWithAlias(uint8 race);
+
 EmotesTextSoundEntry const* FindTextSoundEmoteFor(uint32 emote, uint32 race, uint32 gender);
 typedef std::unordered_map<uint32 /* SkillLine */, std::vector<SkillLineAbilityEntry const*> > SkillLineAbilityIndexBySkillLine;
 std::vector<SkillLineAbilityEntry const*> const& GetSkillLineAbilitiesBySkillLine(uint32 skillLine);

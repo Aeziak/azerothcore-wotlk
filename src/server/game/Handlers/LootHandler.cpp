@@ -319,6 +319,10 @@ void WorldSession::HandleLootReleaseOpcode(WorldPacket& recvData)
     ObjectGuid guid;
     recvData >> guid;
 
+    // Shared control: only the client showing the loot window may close it.
+    if (GetPlayer()->GetLootWindowSession() != this)
+        return;
+
     if (ObjectGuid lguid = GetPlayer()->GetLootGUID())
         if (lguid == guid)
             DoLootRelease(lguid);

@@ -417,6 +417,17 @@ void WorldSession::HandleLogoutRequestOpcode(WorldPackets::Character::LogoutRequ
 {
     LOG_DEBUG("network", "WORLD: Recvd CMSG_LOGOUT_REQUEST Message, security - {}", GetSecurity());
 
+    // Shared control: the player stays in the world with the other client, so leaving is instant.
+    if (IsCopilot() || GetPlayer()->HasCopilotSessions())
+    {
+        WorldPackets::Character::LogoutResponse logoutResponse;
+        logoutResponse.LogoutResult = 0;
+        logoutResponse.Instant = true;
+        SendPacket(logoutResponse.Write());
+        LogoutPlayer(true);
+        return;
+    }
+
     if (ObjectGuid lguid = GetPlayer()->GetLootGUID())
         DoLootRelease(lguid);
 

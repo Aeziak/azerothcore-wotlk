@@ -1,0 +1,159 @@
+[worldserver]
+
+########################################
+# mod-two-headed-ogre configuration
+########################################
+#
+#    TwoHeadedOgre.Enable
+#        Description: Master switch. When disabled, the Ogre race cannot be created and existing
+#                     ogres can no longer be shared by two players.
+#        Default:     1 (enabled)
+
+TwoHeadedOgre.Enable = 1
+
+#
+#    TwoHeadedOgre.Race
+#        Description: Race id used by the Ogre. It must match the client patch (ChrRaces.dbc) and the
+#                     chrraces_dbc / playercreateinfo rows of the world SQL. 9 is the unused Goblin slot.
+#        Default:     9
+
+TwoHeadedOgre.Race = 9
+
+#
+#    TwoHeadedOgre.CarrierClass
+#        Description: Ogres do not choose a class. The client hides the class choice and the server
+#                     always creates them with this class (it gives the power type: 2 = Paladin, mana).
+#                     It must have a `playercreateinfo` row for the Ogre race.
+#        Default:     2
+
+TwoHeadedOgre.CarrierClass = 2
+
+#
+#    TwoHeadedOgre.RaceAliasMask
+#        Description: Race mask the Ogre also counts as for race-restricted content (quests, items,
+#                     reputation, mails, skills). 690 = every Horde race.
+#        Default:     690
+
+TwoHeadedOgre.RaceAliasMask = 690
+
+#
+#    TwoHeadedOgre.SkillClassMask
+#        Description: Class mask the Ogre counts as when the game checks whether a skill exists for
+#                     its race/class (SkillRaceClassInfo). 1535 = every class: all weapon skills.
+#        Default:     1535
+
+TwoHeadedOgre.SkillClassMask = 1535
+
+#
+#    TwoHeadedOgre.Spells
+#        Description: Spells every Ogre knows (learned at login when missing): all armor types,
+#                     shields, dual wield, every weapon skill, Titan's Grip, the Orcish language
+#                     the head's first spells (2136 Fire Blast, 589 Shadow Word: Pain) and the Ogre racials:
+#                     91050 Fureur bicéphale (active) and 91051 Chute d'ogre (passive), and the
+#                     stances 91060 MOI TAPER, 91061 MOI MAGIE, 91062 MOI ENCAISSER, and 91066 Deux
+#                     cerveaux (passive).
+#        Default:     "750 8737 9077 9078 9116 674 196 197 198 199 200 201 202 227 264 266 1180 2567 5011 5009 15590 46917 669 2136 589 91050 91051 91060 91061 91062 91066"
+
+TwoHeadedOgre.Spells = "750 8737 9077 9078 9116 674 196 197 198 199 200 201 202 227 264 266 1180 2567 5011 5009 15590 46917 669 2136 589 91050 91051 91060 91061 91062 91066"
+
+#
+#    TwoHeadedOgre.IgnoreItemRestrictions
+#        Description: Let Ogres use items restricted to other classes or races.
+#        Default:     1 (enabled)
+
+TwoHeadedOgre.IgnoreItemRestrictions = 1
+
+#
+#    TwoHeadedOgre.Display.CreatureEntry
+#        Description: Creature whose first model is the Ogre's appearance (5473 = Dunemaul Ogre Mage,
+#                     a two-headed ogre). Only used when TwoHeadedOgre.Display.ModelId = 0.
+#        Default:     5473
+
+TwoHeadedOgre.Display.CreatureEntry = 5473
+
+#
+#    TwoHeadedOgre.Display.ModelId
+#        Description: Explicit display id. If > 0 it wins over Display.CreatureEntry. Use a display whose own
+#                     scale (CreatureDisplayInfo) is 1.0: the client sizes the movement collision from it, a
+#                     big display scale (12003 is x2.65) blocks doors whatever the ogre's scale.
+#        Default:     3250 (yellow two-headed ogre mage, display scale 1.0)
+
+TwoHeadedOgre.Display.ModelId = 3250
+
+#    TwoHeadedOgre.Display.FemaleModelId
+#        Description: Display id of female Ogres. 0 = same as males. Same remark on the display scale.
+#                     The client patch shows the same skin on the character creation screen.
+#        Default:     19930 (blue two-headed ogre mage, display scale 1.0)
+
+TwoHeadedOgre.Display.FemaleModelId = 19930
+
+#    TwoHeadedOgre.Display.Scale
+#        Description: Ogre size (1.0 = model default, about the size of an orc with the default displays).
+#        Default:     1.0
+
+TwoHeadedOgre.Display.Scale = 1.0
+
+#
+#    TwoHeadedOgre.Head.Spells
+#        Description: Spells that belong to the head (any rank stands for the whole spell chain). Only the
+#                     head's client lists and casts them; the body's client lists and casts every other
+#                     spell. The head's client also lists passive spells. They must be known (see
+#                     TwoHeadedOgre.Spells or learned later).
+#        Default:     "2136 589" (Fire Blast, Shadow Word: Pain: instant, the body's moves never interrupt them)
+
+TwoHeadedOgre.Head.Spells = "2136 589"
+
+#    TwoHeadedOgre.SharedSpells
+#        Description: Spells both heads list and cast (any rank stands for the whole spell chain).
+#        Default:     "91050" (Fureur bicéphale: for 20 s the head casts on its own, without the body's
+#                     cast slot, global cooldown or facing). The stances are the body's alone.
+
+TwoHeadedOgre.SharedSpells = "91050"
+
+#    TwoHeadedOgre.Head.ActionBar
+#        Description: Spells placed on the head's action bar (from the first button) the first time an
+#                     account plays the head of an ogre. The head then keeps its own bars, saved apart
+#                     from the body's. The spells must be known (see TwoHeadedOgre.Spells).
+#        Default:     "2136 589" (Fire Blast, Shadow Word: Pain)
+
+TwoHeadedOgre.Head.ActionBar = "2136 589"
+
+#    TwoHeadedOgre.Brute.Spells
+#        Description: The Brute (the Ogre's class: the Paladin carrier, renamed by the client patch) loses
+#                     the Paladin class skills and spells at its first login and learns these instead (the
+#                     body's spells). Class trainers teach nothing to Ogres: the roulette does.
+#        Default:     "78 324" (Heroic Strike, Lightning Shield)
+
+TwoHeadedOgre.Brute.Spells = "78 324"
+
+#    TwoHeadedOgre.Brute.OffHand
+#        Description: Item equipped in the off hand at the first login (the main hand one comes from
+#                     playercreateinfo_item). 0 = none.
+#        Default:     91003 (Jointures de brute)
+
+TwoHeadedOgre.Brute.OffHand = 91003
+
+#    TwoHeadedOgre.TwoBrains.Chance
+#        Description: Deux cerveaux (passive racial 91066), in percent: chance that an attack of the head gives
+#                     it Idée fixe (its next cast cannot be interrupted by the body), and that each damage of
+#                     the head gives the body Réflexe d'ogre (it dodges the next melee hit taken from the front).
+#        Default:     5
+
+TwoHeadedOgre.TwoBrains.Chance = 5
+
+#    TwoHeadedOgre.Roulette.Enable
+#        Description: Spell roulette. Every TwoHeadedOgre.Roulette.LevelInterval levels, the ogre gets a
+#                     random spell taught by any class trainer, up to its level: the body (melee spells
+#                     and buffs) and the head (ranged spells, heals and buffs, no hunter spell) in turn,
+#                     the body first. A spell is
+#                     rolled once per ogre. Rage and energy are unlocked by the spells that use them.
+#                     Missing rolls (levels gained before) are done at login.
+#        Default:     1 (enabled)
+
+TwoHeadedOgre.Roulette.Enable = 1
+
+#    TwoHeadedOgre.ChatPrefix
+#        Description: Prefix what an Ogre says with the name of the head that typed it: "[Zug] hello".
+#        Default:     1 (enabled)
+
+TwoHeadedOgre.ChatPrefix = 1

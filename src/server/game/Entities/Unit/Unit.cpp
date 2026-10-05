@@ -34,6 +34,7 @@
 #include "Creature.h"
 #include "CreatureAIImpl.h"
 #include "CreatureGroups.h"
+#include "DBCStores.h"
 #include "DisableMgr.h"
 #include "DynamicVisibility.h"
 #include "Errors.h"
@@ -76,6 +77,11 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+
+uint32 Unit::getRaceMask() const
+{
+    return GetRaceMaskWithAlias(getRace(true));
+}
 
 float baseMoveSpeed[MAX_MOVE_TYPE] =
 {

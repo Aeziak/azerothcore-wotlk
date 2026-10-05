@@ -118,6 +118,7 @@ void WorldSession::HandleUseItemOpcode(WorldPacket& recvPacket)
                 std::move(packetCopy), // Move ownership of copied packet
                 true // itemCast
             );
+            _player->SpellQueue.back().session = this;
             return;
         }
 
@@ -407,6 +408,14 @@ void WorldSession::HandleCastSpellOpcode(WorldPacket& recvPacket)
         return;
     }
 
+    // Shared control: each client of a shared player only casts its own spells.
+    if (mover == _player && !sScriptMgr->OnPlayerCanUseSpellFromSession(_player, this, spellId))
+    {
+        Spell::SendCastResult(_player, spellInfo, castCount, SPELL_FAILED_NOT_KNOWN);
+        recvPacket.rfinish();
+        return;
+    }
+
     // fail if we are cancelling pending request
     if (!_player->SpellQueue.empty())
     {
@@ -434,6 +443,7 @@ void WorldSession::HandleCastSpellOpcode(WorldPacket& recvPacket)
                 spellInfo->GetCategory(),
                 std::move(packetCopy) // Move ownership of copied packet
             );
+            _player->SpellQueue.back().session = this;
             return;
         }
     }

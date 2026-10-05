@@ -449,6 +449,13 @@ void Map::Update(const uint32 t_diff, const uint32 s_diff, bool  /*thread*/)
             MapSessionFilter updater(session);
             session->Update(s_diff, updater);
 
+            // Shared control: co-pilot clients act on this player from the same map thread.
+            for (WorldSession* copilot : player->GetCopilotSessions())
+            {
+                MapSessionFilter copilotUpdater(copilot);
+                copilot->Update(s_diff, copilotUpdater);
+            }
+
             // update players at tick
             if (!t_diff)
                 player->Update(s_diff);

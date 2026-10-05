@@ -94,6 +94,7 @@
 #include "WorldState.h"
 #include "WorldStateDefines.h"
 #include "WorldStatePackets.h"
+#include <algorithm>
 #include <cmath>
 #include <queue>
 
@@ -2807,6 +2808,10 @@ void Player::SendInitialSpells()
         if (!itr->second->Active || !itr->second->IsInSpec(GetActiveSpec()))
             continue;
 
+        // Shared control: each client only lists the spells it may cast (GetSession() is the receiving client).
+        if (!sScriptMgr->OnPlayerCanUseSpellFromSession(this, GetSession(), itr->first))
+            continue;
+
         data << uint32(itr->first);
         data << uint16(0);                                  // it's not slot id
 
@@ -4386,6 +4391,10 @@ void Player::DeleteFromDB(ObjectGuid::LowType lowGuid, uint32 accountId, bool up
                 trans->Append(stmt);
 
                 stmt = CharacterDatabase.GetPreparedStatement(CHAR_DEL_CHAR_SETTINGS);
+                stmt->SetData(0, lowGuid);
+                trans->Append(stmt);
+
+                stmt = CharacterDatabase.GetPreparedStatement(CHAR_DEL_CHARACTER_SHARED_ACCESS_ALL);
                 stmt->SetData(0, lowGuid);
                 trans->Append(stmt);
 
@@ -11931,6 +11940,121 @@ void Player::SendInitialPacketsAfterAddToMap()
 
 }
 
+void Player::AddCopilotSession(WorldSession* session)
+{
+    if (session && session != m_session && std::find(_copilotSessions.begin(), _copilotSessions.end(), session) == _copilotSessions.end())
+        _copilotSessions.push_back(session);
+}
+
+void Player::RemoveCopilotSession(WorldSession* session)
+{
+    std::erase(_copilotSessions, session);
+
+    if (_actingSession == session)
+        _actingSession = nullptr;
+
+    if (_lootWindowSession == session)
+        _lootWindowSession = nullptr;
+}
+
+// Unlike SendInitialPacketsBefore/AfterAddToMap this never changes player state (mover, zone,
+// stand state...): the player is already in world and steered by another client.
+// The caller routes GetSession() to the receiving client while this runs.
+void Player::SendInitialPacketsForCopilot(bool login, bool steering)
+{
+    if (login)
+    {
+        GetSocial()->SendSocialList(this, SOCIAL_FLAG_ALL);
+
+        WorldPacket data(SMSG_BINDPOINTUPDATE, 5 * 4);
+        data << m_homebindX << m_homebindY << m_homebindZ;
+        data << uint32(m_homebindMapId);
+        data << uint32(m_homebindAreaId);
+        SendDirectMessage(&data);
+
+        SendTalentsInfoData(false);
+        SendInitialSpells();
+        SendUnlearnSpells();
+        SendInitialActionButtons();
+        m_reputationMgr->SendInitialReputations();
+        m_achievementMgr->SendAllAchievementData();
+        SendEquipmentSetList();
+
+        data.Initialize(SMSG_LOGIN_SETTIMESPEED, 4 + 4 + 4);
+        data.AppendPackedTime(GameTime::GetGameTime().count());
+        data << float(0.01666667f);
+        data << uint32(0);
+        SendDirectMessage(&data);
+
+        GetReputationMgr().SendForceReactions();
+    }
+
+    WorldPacket difficulty(SMSG_INSTANCE_DIFFICULTY, 4 + 4);
+    difficulty << uint32(GetMap()->GetDifficulty());
+    difficulty << uint32(GetMap()->GetEntry()->IsDynamicDifficultyMap() && GetMap()->IsHeroic());
+    SendDirectMessage(&difficulty);
+
+    GetMap()->SendInitTransports(this);
+    GetMap()->SendInitSelf(this);
+
+    // Everything the primary client already displays.
+    UpdateData update;
+    std::vector<Unit*> visibleUnits;
+    for (auto const& [guid, object] : *GetObjectVisibilityContainer().GetVisibleWorldObjectsMap())
+    {
+        object->BuildCreateUpdateBlockForPlayer(&update, this);
+        if (Unit* unit = object->ToUnit())
+            visibleUnits.push_back(unit);
+    }
+
+    if (update.HasData())
+    {
+        WorldPacket packet;
+        update.BuildPacket(packet);
+        SendDirectMessage(&packet);
+    }
+
+    for (Unit* unit : visibleUnits)
+        GetInitialVisiblePackets(unit);
+
+    GetSession()->ResetTimeSync();
+    GetSession()->SendTimeSync();
+
+    static AuraType const clientAuraTypes[] =
+    {
+        SPELL_AURA_MOD_FEAR, SPELL_AURA_TRANSFORM, SPELL_AURA_WATER_WALK, SPELL_AURA_FEATHER_FALL,
+        SPELL_AURA_HOVER, SPELL_AURA_SAFE_FALL, SPELL_AURA_FLY, SPELL_AURA_MOD_INCREASE_MOUNTED_FLIGHT_SPEED
+    };
+    for (AuraType auraType : clientAuraTypes)
+    {
+        AuraEffectList const& auraList = GetAuraEffectsByType(auraType);
+        if (!auraList.empty())
+            auraList.front()->HandleEffect(this, AURA_EFFECT_HANDLE_SEND_FOR_CLIENT, true);
+    }
+
+    uint32 zoneId, areaId;
+    GetZoneAndAreaId(zoneId, areaId);
+    SendInitWorldStates(zoneId, areaId);
+    SendEnchantmentDurations();
+    SendItemDurations();
+    SendQuestGiverStatusMultiple();
+
+    if (login)
+    {
+        if (Group* group = GetGroup())
+            group->SendUpdateToPlayer(GetGUID());
+
+        PetSpellInitialize();
+        SendTalentsInfoData(true);
+    }
+
+    // A co-pilot client sees its own character but never steers it.
+    WorldPacket control(SMSG_CLIENT_CONTROL_UPDATE, GetPackGUID().size() + 1);
+    control << GetPackGUID();
+    control << uint8(steering && CanFreeMove() ? 1 : 0);
+    SendDirectMessage(&control);
+}
+
 void Player::SendUpdateToOutOfRangeGroupMembers()
 {
     if (m_groupUpdateMask == GROUP_UPDATE_FLAG_NONE)
@@ -14198,8 +14322,12 @@ void Player::HandleFall(MovementInfo const& movementInfo)
     // calculate total z distance of the fall
     float z_diff = m_lastFallZ - movementInfo.pos.GetPositionZ();
 
+    // Scripts react to the landing and may cancel the fall damage.
+    bool fallDamage = true;
+    sScriptMgr->OnPlayerFall(this, z_diff, fallDamage);
+
     //Players with low fall distance, Feather Fall or physical immunity (charges used) are ignored
-    if (z_diff >= MIN_FALL_DMG_DIST && !isDead() && !IsGameMaster() && !GetCommandStatus(CHEAT_GOD) &&
+    if (fallDamage && z_diff >= MIN_FALL_DMG_DIST && !isDead() && !IsGameMaster() && !GetCommandStatus(CHEAT_GOD) &&
             !HasHoverAura() && !HasFeatherFallAura() &&
             !HasFlyAura())
     {

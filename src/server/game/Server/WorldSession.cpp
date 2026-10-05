@@ -36,6 +36,7 @@
 #include "MapMgr.h"
 #include "Metric.h"
 #include "MiscPackets.h"
+#include "MotdMgr.h"
 #include "ObjectAccessor.h"
 #include "ObjectMgr.h"
 #include "Opcodes.h"
@@ -56,11 +57,41 @@
 #include "WorldPacket.h"
 #include "WorldSocket.h"
 #include "WorldState.h"
+#include <algorithm>
 #include <zlib.h>
 
 namespace
 {
     std::string const DefaultPlayerName = "<none>";
+
+    // Shared control: packets of the loot window, sent to the client that opened it only.
+    bool IsLootWindowOpcode(uint16 opcode)
+    {
+        switch (opcode)
+        {
+            case SMSG_LOOT_RESPONSE:
+            case SMSG_LOOT_RELEASE_RESPONSE:
+            case SMSG_LOOT_REMOVED:
+            case SMSG_LOOT_CLEAR_MONEY:
+            case SMSG_LOOT_MASTER_LIST:
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    // Shared control: spell added to a client's spell list by this packet, 0 if none.
+    uint32 GetSpellListOpcodeSpell(WorldPacket const& packet)
+    {
+        switch (packet.GetOpcode())
+        {
+            case SMSG_LEARNED_SPELL:    // spell, uint16
+            case SMSG_SUPERCEDED_SPELL: // spell, other rank of the same chain
+                return packet.size() >= 4 ? packet.read<uint32>(0) : 0;
+            default:
+                return 0;
+        }
+    }
 }
 
 bool MapSessionFilter::Process(WorldPacket* packet)
@@ -307,6 +338,37 @@ ObjectGuid::LowType WorldSession::GetGuidLow() const
 /// Send a packet to the client
 void WorldSession::SendPacket(WorldPacket const* packet)
 {
+    // Shared control: co-pilots display exactly what the primary client receives, except the loot window
+    // which only the client that opened it shows (another client would close it at once) and the spells
+    // a client may not cast.
+    if (_player && _player->GetSession() == this)
+    {
+        if (IsLootWindowOpcode(packet->GetOpcode()))
+        {
+            if (packet->GetOpcode() == SMSG_LOOT_RESPONSE)
+                _player->SetLootWindowSession(_player->GetActingSession());
+
+            if (WorldSession* owner = _player->GetLootWindowSession(); owner != this)
+            {
+                owner->SendPacket(packet);
+                return;
+            }
+        }
+        else if (uint32 spellId = GetSpellListOpcodeSpell(*packet))
+        {
+            // Each client only lists the spells it may cast.
+            for (WorldSession* copilot : _player->GetCopilotSessions())
+                if (sScriptMgr->OnPlayerCanUseSpellFromSession(_player, copilot, spellId))
+                    copilot->SendCopilotPacket(packet);
+
+            if (!sScriptMgr->OnPlayerCanUseSpellFromSession(_player, this, spellId))
+                return;
+        }
+        else
+            for (WorldSession* copilot : _player->GetCopilotSessions())
+                copilot->SendCopilotPacket(packet);
+    }
+
     sScriptMgr->OnPacketSent(this, *packet);
 
     if (!m_Socket)
@@ -354,6 +416,187 @@ void WorldSession::SendPacket(WorldPacket const* packet)
     }
 
     m_Socket->SendPacket(*packet);
+}
+
+bool WorldSession::IsCopilot() const
+{
+    return _player && _player->GetSession() != this;
+}
+
+void WorldSession::SendCopilotPacket(WorldPacket const* packet)
+{
+    if (_copilotAwaitingWorldport || _copilotNeedsResync)
+        return;
+
+    switch (packet->GetOpcode())
+    {
+        // Connection or account state of the primary client, or movement control.
+        case SMSG_CLIENT_CONTROL_UPDATE:
+        case SMSG_TIME_SYNC_REQ:
+        case SMSG_LOGOUT_RESPONSE:
+        case SMSG_LOGOUT_COMPLETE:
+        case SMSG_LOGOUT_CANCEL_ACK:
+        case SMSG_LOGIN_VERIFY_WORLD:
+        case SMSG_WARDEN_DATA:
+        case SMSG_ACCOUNT_DATA_TIMES:
+        case SMSG_UPDATE_ACCOUNT_DATA:
+        case SMSG_UPDATE_ACCOUNT_DATA_COMPLETE:
+        case SMSG_TUTORIAL_FLAGS:
+        case SMSG_MOTD:
+        // A co-pilot has its own action bars (see OnPlayerCopilotSetActionButton).
+        case SMSG_ACTION_BUTTONS:
+            return;
+        case SMSG_NEW_WORLD:
+            // The co-pilot loads the new map too; it receives a fresh snapshot after its own ack.
+            SendPacket(packet);
+            _copilotAwaitingWorldport = true;
+            return;
+        default:
+            SendPacket(packet);
+            return;
+    }
+}
+
+// Returns true when the opcode was consumed: a co-pilot never steers the shared player
+// and never edits its action bars.
+bool WorldSession::HandleCopilotRestrictedOpcode(WorldPacket const& packet)
+{
+    switch (packet.GetOpcode())
+    {
+        case MSG_MOVE_WORLDPORT_ACK:
+            if (_copilotAwaitingWorldport)
+            {
+                _copilotAwaitingWorldport = false;
+                _copilotNeedsResync = true;
+            }
+            return true;
+        case CMSG_SET_ACTION_BUTTON:
+        {
+            // The co-pilot's own action bars are kept by scripts.
+            if (packet.size() < 1 + 4)
+                return true;
+
+            WorldPacket data(packet);
+            uint8 button;
+            uint32 packedData;
+            data >> button >> packedData;
+            if (button < MAX_ACTION_BUTTONS)
+                sScriptMgr->OnPlayerCopilotSetActionButton(_player, this, button, packedData);
+            return true;
+        }
+        // A co-pilot keeps its own target on its screen: the shared player's selection stays the steering one's.
+        case CMSG_SET_SELECTION:
+            return true;
+        // Talent points are the steering one's to spend.
+        case CMSG_LEARN_TALENT:
+        case CMSG_LEARN_PREVIEW_TALENTS:
+        case MSG_TALENT_WIPE_CONFIRM:
+            return true;
+        case MSG_MOVE_START_FORWARD:
+        case MSG_MOVE_START_BACKWARD:
+        case MSG_MOVE_STOP:
+        case MSG_MOVE_START_STRAFE_LEFT:
+        case MSG_MOVE_START_STRAFE_RIGHT:
+        case MSG_MOVE_STOP_STRAFE:
+        case MSG_MOVE_JUMP:
+        case MSG_MOVE_START_TURN_LEFT:
+        case MSG_MOVE_START_TURN_RIGHT:
+        case MSG_MOVE_STOP_TURN:
+        case MSG_MOVE_START_PITCH_UP:
+        case MSG_MOVE_START_PITCH_DOWN:
+        case MSG_MOVE_STOP_PITCH:
+        case MSG_MOVE_SET_RUN_MODE:
+        case MSG_MOVE_SET_WALK_MODE:
+        case MSG_MOVE_TELEPORT_ACK:
+        case MSG_MOVE_FALL_LAND:
+        case MSG_MOVE_START_SWIM:
+        case MSG_MOVE_STOP_SWIM:
+        case MSG_MOVE_SET_FACING:
+        case MSG_MOVE_SET_PITCH:
+        case MSG_MOVE_HEARTBEAT:
+        case MSG_MOVE_START_ASCEND:
+        case MSG_MOVE_STOP_ASCEND:
+        case MSG_MOVE_START_DESCEND:
+        case CMSG_MOVE_FALL_RESET:
+        case CMSG_MOVE_SET_FLY:
+        case CMSG_MOVE_CHNG_TRANSPORT:
+        case CMSG_MOVE_SPLINE_DONE:
+        case CMSG_MOVE_TIME_SKIPPED:
+        case CMSG_MOVE_NOT_ACTIVE_MOVER:
+        case CMSG_MOVE_KNOCK_BACK_ACK:
+        case CMSG_MOVE_HOVER_ACK:
+        case CMSG_MOVE_FEATHER_FALL_ACK:
+        case CMSG_MOVE_WATER_WALK_ACK:
+        case CMSG_MOVE_SET_CAN_FLY_ACK:
+        case CMSG_MOVE_SET_CAN_TRANSITION_BETWEEN_SWIM_AND_FLY_ACK:
+        case CMSG_MOVE_GRAVITY_DISABLE_ACK:
+        case CMSG_MOVE_GRAVITY_ENABLE_ACK:
+        case CMSG_MOVE_SET_COLLISION_HGT_ACK:
+        case CMSG_FORCE_RUN_SPEED_CHANGE_ACK:
+        case CMSG_FORCE_RUN_BACK_SPEED_CHANGE_ACK:
+        case CMSG_FORCE_SWIM_SPEED_CHANGE_ACK:
+        case CMSG_FORCE_SWIM_BACK_SPEED_CHANGE_ACK:
+        case CMSG_FORCE_WALK_SPEED_CHANGE_ACK:
+        case CMSG_FORCE_TURN_RATE_CHANGE_ACK:
+        case CMSG_FORCE_FLIGHT_SPEED_CHANGE_ACK:
+        case CMSG_FORCE_FLIGHT_BACK_SPEED_CHANGE_ACK:
+        case CMSG_FORCE_PITCH_RATE_CHANGE_ACK:
+        case CMSG_FORCE_MOVE_ROOT_ACK:
+        case CMSG_FORCE_MOVE_UNROOT_ACK:
+        case CMSG_SET_ACTIVE_MOVER:
+            return true;
+        default:
+            return false;
+    }
+}
+
+void WorldSession::SendCopilotWorldState(bool login)
+{
+    Player* player = _player;
+    WorldSession* primary = player->GetSession();
+
+    // Route every player-directed packet to this client only while the snapshot is built
+    // (and keep this session out of the mirror list meanwhile: it would mirror to itself).
+    std::vector<WorldSession*> const& copilots = player->GetCopilotSessions();
+    bool const listed = std::find(copilots.begin(), copilots.end(), this) != copilots.end();
+    if (listed)
+        player->RemoveCopilotSession(this);
+    player->SetSteeringSession(primary);
+    player->SetSession(this);
+
+    if (login)
+    {
+        WorldPacket data(SMSG_LOGIN_VERIFY_WORLD, 20);
+        data << player->GetMapId();
+        data << player->GetPositionX();
+        data << player->GetPositionY();
+        data << player->GetPositionZ();
+        data << player->GetOrientation();
+        SendPacket(&data);
+
+        SendAccountDataTimes(PER_CHARACTER_CACHE_MASK);
+
+        data.Initialize(SMSG_FEATURE_SYSTEM_STATUS, 2);
+        data << uint8(2);
+        data << uint8(0);
+        SendPacket(&data);
+
+        SendPacket(sMotdMgr->GetMotdPacket(GetSessionDbLocaleIndex()));
+
+        data.Initialize(SMSG_LEARNED_DANCE_MOVES, 4 + 4);
+        data << uint32(0);
+        data << uint32(0);
+        SendPacket(&data);
+
+        if (Guild* guild = sGuildMgr->GetGuildById(player->GetGuildId()))
+            guild->HandleRoster(this);
+    }
+
+    player->SendInitialPacketsForCopilot(login, primary == this);
+    player->SetSession(primary);
+    player->SetSteeringSession(nullptr);
+    if (listed)
+        player->AddCopilotSession(this);
 }
 
 /// Add an incoming packet to the queue
@@ -410,9 +653,16 @@ bool WorldSession::Update(uint32 diff, PacketFilter& updater)
     }
 
     constexpr uint32 MAX_PROCESSED_PACKETS_IN_SAME_WORLDSESSION_UPDATE = 150;
+    Player* actingPlayer = nullptr;
 
     while (m_Socket && _recvQueue.next(packet, updater))
     {
+        if (IsCopilot() && HandleCopilotRestrictedOpcode(*packet))
+        {
+            delete packet;
+            continue;
+        }
+
         OpcodeClient opcode = static_cast<OpcodeClient>(packet->GetOpcode());
         ClientOpcodeHandler const* opHandle = opcodeTable[opcode];
 
@@ -438,6 +688,11 @@ bool WorldSession::Update(uint32 diff, PacketFilter& updater)
         if (evaluationPolicy == WorldSession::DosProtection::Policy::Process
             || evaluationPolicy == WorldSession::DosProtection::Policy::Log)
         {
+            // Lets handlers know which client of a shared player sent this packet.
+            actingPlayer = _player;
+            if (actingPlayer)
+                actingPlayer->SetActingSession(this);
+
             try
             {
                 switch (opHandle->Status)
@@ -554,6 +809,11 @@ bool WorldSession::Update(uint32 diff, PacketFilter& updater)
             }
         }
 
+        // The handler may have logged the player out or handed it over to another session.
+        if (actingPlayer && _player == actingPlayer)
+            actingPlayer->SetActingSession(nullptr);
+        actingPlayer = nullptr;
+
         if (deletePacket)
             delete packet;
 
@@ -597,6 +857,13 @@ bool WorldSession::Update(uint32 diff, PacketFilter& updater)
     {
         sScriptMgr->OnSessionUpdate(this, diff);
 
+        // A shared-control client finished loading a map: show it the world the player is now in.
+        if (_copilotNeedsResync && _player && _player->IsInWorld() && !_player->IsBeingTeleported())
+        {
+            _copilotNeedsResync = false;
+            SendCopilotWorldState(false);
+        }
+
         if (m_Socket && m_Socket->IsOpen() && _warden)
         {
             _warden->Update(diff);
@@ -626,6 +893,10 @@ bool WorldSession::Update(uint32 diff, PacketFilter& updater)
 
 bool WorldSession::HandleSocketClosed()
 {
+    // A shared player never waits in an offline session: the other client keeps playing it.
+    if (GetPlayer() && (IsCopilot() || GetPlayer()->HasCopilotSessions()))
+        return false;
+
     if (m_Socket && !m_Socket->IsOpen() && !IsKicked() && GetPlayer() && !PlayerLogout() && GetPlayer()->m_taxi.empty() && GetPlayer()->IsInWorld() && !World::IsStopped())
     {
         m_Socket = nullptr;
@@ -685,6 +956,23 @@ void WorldSession::SendPlayTimeWarning(PlayTimeFlag flag, int32 playTimeRemainin
 /// %Log the player out
 void WorldSession::LogoutPlayer(bool save, bool redirecting)
 {
+    // Shared control: leaving a shared player never removes it from the world.
+    if (IsCopilot())
+    {
+        DetachCopilot();
+        return;
+    }
+
+    if (_player && _player->HasCopilotSessions() && !redirecting)
+    {
+        HandOverPlayer();
+        return;
+    }
+
+    // The player leaves this server: its co-pilots go back to character selection.
+    while (_player && _player->HasCopilotSessions())
+        _player->GetCopilotSessions().front()->DetachCopilot();
+
     // finish pending transfers before starting the logout
     while (_player && _player->IsBeingTeleportedFar())
         HandleMoveWorldportAck();
@@ -871,10 +1159,80 @@ void WorldSession::LogoutPlayer(bool save, bool redirecting)
         }
     }
 
+    FinishLogout();
+}
+
+void WorldSession::FinishLogout()
+{
     m_playerLogout = false;
     m_playerSave = false;
     m_playerRecentlyLogout = true;
+    _copilotAwaitingWorldport = false;
+    _copilotNeedsResync = false;
     SetLogoutStartTime(0);
+}
+
+void WorldSession::DetachCopilot()
+{
+    Player* player = _player;
+    LOG_INFO("entities.player", "Account: {} (IP: {}) stopped sharing control of [{}] ({})",
+        GetAccountId(), GetRemoteAddress(), player->GetName(), player->GetGUID().ToString());
+
+    sScriptMgr->OnPlayerCopilotDetached(player, this);
+    player->RemoveCopilotSession(this);
+    SetPlayer(nullptr);
+    SendPacket(WorldPackets::Character::LogoutComplete().Write());
+    FinishLogout();
+}
+
+void WorldSession::HandOverPlayer()
+{
+    Player* player = _player;
+
+    // finish pending transfers so the next client takes over a player that is in a map
+    while (player->IsBeingTeleportedFar())
+        HandleMoveWorldportAck();
+
+    if (ObjectGuid lguid = player->GetLootGUID())
+        DoLootRelease(lguid);
+
+    // The next client cannot drive a vehicle it never saw being boarded.
+    if (player->GetVehicle())
+        player->ExitVehicle();
+
+    // Undo a pending timed logout of this client: the player stays in the world.
+    if (_logoutTime && player->HasUnitFlag(UNIT_FLAG_STUNNED))
+    {
+        player->SetRooted(false, true, true);
+        player->RemoveUnitFlag(UNIT_FLAG_STUNNED);
+    }
+
+    WorldSession* heir = player->GetCopilotSessions().front();
+    player->RemoveCopilotSession(heir);
+    player->SetActingSession(nullptr);
+    player->SetSession(heir);
+    delete player->PlayerTalkClass;
+    player->PlayerTalkClass = new PlayerMenu(heir);
+
+    LOG_INFO("entities.player", "Account: {} (IP: {}) handed control of [{}] ({}) over to account {}",
+        GetAccountId(), GetRemoteAddress(), player->GetName(), player->GetGUID().ToString(), heir->GetAccountId());
+
+    SetPlayer(nullptr);
+    SendPacket(WorldPackets::Character::LogoutComplete().Write());
+    FinishLogout();
+
+    // A client still loading a map gets its snapshot (with control) after its own worldport ack.
+    if (!heir->_copilotAwaitingWorldport && !heir->_copilotNeedsResync)
+    {
+        WorldPacket control(SMSG_CLIENT_CONTROL_UPDATE, player->GetPackGUID().size() + 1);
+        control << player->GetPackGUID();
+        control << uint8(player->CanFreeMove() ? 1 : 0);
+        heir->SendPacket(&control);
+        heir->ResetTimeSync();
+        heir->SendTimeSync();
+    }
+
+    sScriptMgr->OnPlayerSessionHandover(player, this, heir);
 }
 
 /// Kick a player out of the World
@@ -1016,6 +1374,14 @@ void WorldSession::SetAccountData(AccountDataType type, time_t tm, std::string c
         // _player can be nullptr and packet received after logout but m_GUID still store correct guid
         if (!m_GUIDLow)
             return;
+
+        // Shared control: the steering client owns the per-character UI data of a shared player.
+        if (IsCopilot())
+        {
+            m_accountData[type].Time = tm;
+            m_accountData[type].Data = data;
+            return;
+        }
 
         id = m_GUIDLow;
         index = CHAR_REP_PLAYER_ACCOUNT_DATA;

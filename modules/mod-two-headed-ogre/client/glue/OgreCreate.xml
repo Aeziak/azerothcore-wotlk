@@ -1,0 +1,53 @@
+<Ui xmlns="http://www.blizzard.com/wow/ui/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.blizzard.com/wow/ui/
+..\FrameXML\UI.xsd">
+	<!-- mod-two-headed-ogre: the Ogre is the 11th race of the creation screen (6th Horde race). -->
+	<CheckButton name="CharacterCreateRaceButton11" inherits="CharacterCreateRaceButtonTemplate" parent="CharacterCreateConfigurationFrame" id="11">
+		<Anchors>
+			<Anchor point="TOPLEFT" relativeTo="CharacterCreateRaceButton10" relativePoint="BOTTOMLEFT" x="0" y="-12"/>
+		</Anchors>
+	</CheckButton>
+	<!-- Second head: the partner's name. The first head is the stock name box. -->
+	<EditBox name="OgreCreatePartnerEdit" parent="CharacterCreateFrame" letters="12" hidden="true" autoFocus="false">
+		<Size x="156" y="40"/>
+		<Anchors>
+			<Anchor point="BOTTOM" relativeTo="CharacterCreateNameEdit" relativePoint="TOP" x="0" y="34"/>
+		</Anchors>
+		<Layers>
+			<Layer level="BACKGROUND">
+				<FontString name="$parentLabel" inherits="GlueFontNormalLarge">
+					<Size x="256" y="64"/>
+					<Anchors>
+						<Anchor point="BOTTOM" relativePoint="TOP" x="0" y="-23"/>
+					</Anchors>
+				</FontString>
+			</Layer>
+		</Layers>
+		<Backdrop bgFile="Interface\Tooltips\UI-Tooltip-Background" edgeFile="Interface\Glues\Common\Glue-Tooltip-Border" tile="true">
+			<BackgroundInsets>
+				<AbsInset left="10" right="5" top="4" bottom="9"/>
+			</BackgroundInsets>
+			<TileSize>
+				<AbsValue val="16"/>
+			</TileSize>
+			<EdgeSize>
+				<AbsValue val="16"/>
+			</EdgeSize>
+		</Backdrop>
+		<Scripts>
+			<OnEscapePressed>
+				CharacterCreate_Back();
+			</OnEscapePressed>
+			<OnEnterPressed>
+				CharacterCreate_Okay();
+			</OnEnterPressed>
+			<OnTabPressed>
+				CharacterCreateNameEdit:SetFocus();
+			</OnTabPressed>
+		</Scripts>
+		<FontString inherits="GlueEditBoxFont"/>
+		<TextInsets>
+			<AbsInset left="15"/>
+		</TextInsets>
+	</EditBox>
+	<Script file="OgreCreate.lua"/>
+</Ui>

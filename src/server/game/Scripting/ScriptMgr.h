@@ -484,6 +484,16 @@ public: /* PlayerScript */
     void OnPlayerBeforeReceiveSpellListFromTrainer(Player* player, Creature* trainer, WorldPackets::NPC::TrainerList& trainerList);
     void OnPlayerGetTrainerSpellState(Player const* player, uint32 trainerId, uint32 spellId, Trainer::SpellState& state);
     void OnPlayerAfterTrainSpell(Player* player, Creature* trainer, uint32 spellId);
+    bool OnPlayerCharacterCreateRequest(WorldSession* session, std::string& name, uint8 race, uint8& playerClass, uint8& response);
+    bool OnPlayerCanJoinAsCopilot(Player* player, WorldSession* session);
+    void OnPlayerCopilotAttached(Player* player, WorldSession* session);
+    void OnPlayerCopilotDetached(Player* player, WorldSession* session);
+    void OnPlayerCopilotSetActionButton(Player* player, WorldSession* session, uint8 button, uint32 packedData);
+    bool OnPlayerCanUseSpellFromSession(Player const* player, WorldSession const* session, uint32 spellId);
+    void OnPlayerFall(Player* player, float fallHeight, bool& fallDamage);
+    void OnPlayerSessionHandover(Player* player, WorldSession* oldSession, WorldSession* newSession);
+    void OnPlayerSharedAccessLeft(ObjectGuid guid, uint32 accountId, uint32 newOwnerAccountId);
+    bool OnPlayerCanIgnoreItemRestrictions(Player const* player, ItemTemplate const* proto);
 
     // Anti cheat
     void AnticheatSetCanFlybyServer(Player* player, bool apply);

@@ -1,0 +1,5 @@
+## Interface: 30300
+## Title: Ogre - Tete de l'ogre
+## Notes: mod-two-headed-ogre : barre de sorts de la tete, roulette des sorts, ressources (installe par build_client_patch.py).
+OgreHead.xml
+OgreRoulette.lua

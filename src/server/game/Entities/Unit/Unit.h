@@ -836,7 +836,8 @@ public:
     // Race methods
     [[nodiscard]] uint8 getRace(bool original = false) const;
     void setRace(uint8 race);
-    [[nodiscard]] uint32 getRaceMask() const { return 1 << (getRace(true) - 1); }
+    // Includes the races a custom race counts as (see SetRaceAlias in DBCStores.h).
+    [[nodiscard]] uint32 getRaceMask() const;
     [[nodiscard]] DisplayRace GetDisplayRaceFromModelId(uint32 modelId) const;
     [[nodiscard]] DisplayRace GetDisplayRace() const { return GetDisplayRaceFromModelId(GetDisplayId()); };
 

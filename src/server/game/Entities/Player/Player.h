@@ -1077,6 +1077,7 @@ struct PendingSpellCastRequest
     WorldPacket requestPacket;
     bool isItem = false;
     bool cancelInProgress = false;
+    WorldSession* session = nullptr; // shared control: client that sent the request (nullptr = primary)
 
     PendingSpellCastRequest(uint32 spellId, uint32 category, WorldPacket&& packet, bool item = false, bool cancel = false)
         : spellId(spellId), category(category), requestPacket(std::move(packet)), isItem(item) , cancelInProgress(cancel) {}
@@ -2031,6 +2032,24 @@ public:
     [[nodiscard]] WorldSession* GetSession() const { return m_session; }
     void SetSession(WorldSession* sess) { m_session = sess; }
 
+    // Shared control: extra client sessions ("co-pilots") attached to this player. Everything sent to the
+    // primary session (GetSession()) is mirrored to them, but only the primary session steers the player.
+    [[nodiscard]] std::vector<WorldSession*> const& GetCopilotSessions() const { return _copilotSessions; }
+    [[nodiscard]] bool HasCopilotSessions() const { return !_copilotSessions.empty(); }
+    void AddCopilotSession(WorldSession* session);
+    void RemoveCopilotSession(WorldSession* session);
+    // Session whose client packet is being handled right now (primary or co-pilot), else the primary.
+    [[nodiscard]] WorldSession* GetActingSession() const { return _actingSession ? _actingSession : m_session; }
+    void SetActingSession(WorldSession* session) { _actingSession = session; }
+    // Session steering the player: GetSession(), except while a snapshot is routed to a co-pilot client.
+    [[nodiscard]] WorldSession* GetSteeringSession() const { return _steeringSession ? _steeringSession : m_session; }
+    void SetSteeringSession(WorldSession* session) { _steeringSession = session; }
+    // Session showing the loot window (the one that opened it), else the primary.
+    [[nodiscard]] WorldSession* GetLootWindowSession() const { return _lootWindowSession ? _lootWindowSession : m_session; }
+    void SetLootWindowSession(WorldSession* session) { _lootWindowSession = session != m_session ? session : nullptr; }
+    // Builds the private world snapshot a client needs to display this already in-world player.
+    void SendInitialPacketsForCopilot(bool login, bool steering);
+
     void BuildCreateUpdateBlockForPlayer(UpdateData* data, Player* target) override;
     void DestroyForPlayer(Player* target, bool onDeath = false) const override;
     void SendLogXPGain(uint32 GivenXP, Unit* victim, uint32 BonusXP, bool recruitAFriend = false, float group_rate = 1.0f);
@@ -2907,6 +2926,10 @@ protected:
     uint32 m_resurrectHealth, m_resurrectMana;
 
     WorldSession* m_session;
+    std::vector<WorldSession*> _copilotSessions;
+    WorldSession* _actingSession{ nullptr };
+    WorldSession* _lootWindowSession{ nullptr };
+    WorldSession* _steeringSession{ nullptr };
 
     typedef std::list<Channel*> JoinedChannelsList;
     JoinedChannelsList m_channels;
